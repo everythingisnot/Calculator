@@ -1,239 +1,264 @@
-/* Token Tycoons rules engine. Pure functions over a plain-JSON game state,
-   so the same code runs on both phones and in the Node balance test. */
+/* Token Tycoons card game rules. Two players. Pure functions over a plain-JSON
+   state, so the same code runs on both phones and in the Node test. */
 (function (root) {
   'use strict';
 
-  var START_BONUS = 150, START_CASH = 1500, MAX_LEVEL = 3, LIMIT_POS = 14;
-  var LEVEL_MULT = [1, 3, 6, 10];
-  var POWER_RENT = [0, 40, 100, 220];
+  var PLAYS = 3, HAND_LIMIT = 7, WIN_STACKS = 3, TUNE_BONUS = 3, MAX_TUNES = 2, LAWSUIT = 4;
 
-  var GROUPS = {
-    data:     { n: 'Data',     c: '#2f7fd6' },
-    chips:    { n: 'Chips',    c: '#e07b1f' },
-    models:   { n: 'Models',   c: '#8b5cf0' },
-    robots:   { n: 'Robotics', c: '#e0445f' },
-    frontier: { n: 'Frontier', c: '#0f8f7f' },
-    power:    { n: 'Power',    c: '#b98a00' }
+  var SECT = {
+    data:     { n: 'Data',     c: '#2f7fd6', size: 2, rent: [1, 3] },
+    power:    { n: 'Power',    c: '#b98a00', size: 2, rent: [2, 4] },
+    chips:    { n: 'Chips',    c: '#e07b1f', size: 3, rent: [1, 3, 5] },
+    models:   { n: 'Models',   c: '#8b5cf0', size: 3, rent: [2, 3, 6] },
+    robots:   { n: 'Robotics', c: '#e0445f', size: 3, rent: [2, 4, 7] },
+    frontier: { n: 'Frontier', c: '#0f8f7f', size: 2, rent: [3, 8] }
+  };
+  var ORDER = ['data', 'power', 'chips', 'models', 'robots', 'frontier'];
+
+  var ACTS = {
+    invoice:  { n: 'Invoice', i: '🧾', v: 1, d: 'Pick one of your sectors. Your rival pays you its rent.' },
+    hype:     { n: 'Hype Cycle', i: '📈', v: 1, d: 'Your next Invoice this turn charges double.' },
+    fund:     { n: 'Funding Round', i: '💸', v: 1, d: 'Draw 2 cards.' },
+    lawsuit:  { n: 'Lawsuit', i: '⚖️', v: 3, d: 'Your rival pays you ₮' + LAWSUIT + '.' },
+    poach:    { n: 'Poach', i: '🎣', v: 3, d: 'Take one asset from a rival stack that is not complete.' },
+    merger:   { n: 'Merger', i: '🤝', v: 3, d: 'Swap one of your assets for one of your rival\'s. Complete stacks are safe.' },
+    takeover: { n: 'Hostile Takeover', i: '🏴‍☠️', v: 5, d: 'Take a whole complete stack from your rival.' },
+    halluc:   { n: 'Hallucination', i: '🌀', v: 2, d: 'Your rival discards 2 random cards from their hand.' },
+    scrape:   { n: 'Scrape', i: '🕸️', v: 2, d: 'Take 1 random card from your rival\'s hand.' },
+    tune:     { n: 'Fine-tune', i: '🎚️', v: 3, d: 'Add to one of your complete stacks. Its rent goes up by ₮' + TUNE_BONUS + '.' },
+    guard:    { n: 'Guardrail', i: '🛡️', v: 3, d: 'Cancels an action played against you. You are offered it when that happens. It does not use up a play.' }
   };
 
-  // 28 spaces, clockwise from the top-left corner.
-  var SPACES = [
-    { t: 'start', n: 'Boot Up', i: '⏻', s: 'START', d: 'Collect ₮' + START_BONUS + ' funding every time you pass or land here.' },
-    { t: 'prop', n: 'Scraper Farm', g: 'data', p: 60, i: '🕸️' },
-    { t: 'card', n: 'Prompt', i: '💬', s: 'PROMPT', d: 'Draw a prompt card. Could be funding, could be a lawsuit.' },
-    { t: 'prop', n: 'Labeling Depot', g: 'data', p: 80, i: '🏷️' },
-    { t: 'tax', n: 'Cloud Bill', i: '☁️', s: '-₮100', a: 100, d: 'The invoice arrived. Pay ₮100.' },
-    { t: 'power', n: 'Solar Array', g: 'power', p: 150, i: '☀️' },
-    { t: 'prop', n: 'Wafer Fab', g: 'chips', p: 120, i: '💿' },
-    { t: 'rest', n: 'Open Source Commons', i: '🌱', s: 'FREE', d: 'Nothing happens here. Enjoy the goodwill.' },
-    { t: 'prop', n: 'GPU Foundry', g: 'chips', p: 140, i: '🎛️' },
-    { t: 'card', n: 'Prompt', i: '💬', s: 'PROMPT', d: 'Draw a prompt card. Could be funding, could be a lawsuit.' },
-    { t: 'prop', n: 'Datacenter Row', g: 'chips', p: 160, i: '🗄️' },
-    { t: 'prop', n: 'Chatbot Co', g: 'models', p: 180, i: '🗨️' },
-    { t: 'halluc', n: 'Hallucination', i: '🌀', s: 'OOPS', d: 'Your models made things up. Pay ₮30 for every tile you own (minimum ₮30).' },
-    { t: 'prop', n: 'Vision Lab', g: 'models', p: 200, i: '👁️' },
-    { t: 'limit', n: 'Rate Limited', i: '⏳', s: 'WAIT', d: 'Too many requests. You skip your next turn.' },
-    { t: 'prop', n: 'Code Copilot', g: 'models', p: 220, i: '⌨️' },
-    { t: 'power', n: 'Fusion Plant', g: 'power', p: 150, i: '⚛️' },
-    { t: 'prop', n: 'Drone Works', g: 'robots', p: 240, i: '🚁' },
-    { t: 'card', n: 'Prompt', i: '💬', s: 'PROMPT', d: 'Draw a prompt card. Could be funding, could be a lawsuit.' },
-    { t: 'prop', n: 'Humanoid Inc', g: 'robots', p: 260, i: '🦾' },
-    { t: 'prop', n: 'Robotaxi Fleet', g: 'robots', p: 280, i: '🚕' },
-    { t: 'bonus', n: 'Viral Demo', i: '🚀', s: '+₮100', a: 100, d: 'Your demo blew up. Collect ₮100.' },
-    { t: 'prop', n: 'Reasoning Engine', g: 'frontier', p: 300, i: '♟️' },
-    { t: 'card', n: 'Prompt', i: '💬', s: 'PROMPT', d: 'Draw a prompt card. Could be funding, could be a lawsuit.' },
-    { t: 'prop', n: 'Agent Swarm', g: 'frontier', p: 320, i: '🐝' },
-    { t: 'power', n: 'Wind Farm', g: 'power', p: 150, i: '🌬️' },
-    { t: 'tax', n: 'Regulators', i: '⚖️', s: '-₮150', a: 150, d: 'Compliance review. Pay ₮150.' },
-    { t: 'prop', n: 'AGI Lab', g: 'frontier', p: 400, i: '✨' }
-  ];
-  var N = SPACES.length;
+  // ---- the deck: card id = index into CARDS ----
+  var CARDS = [];
+  function add(n, card) { for (var k = 0; k < n; k++) CARDS.push(card); }
+  [['data', 1, [['Scraper Farm', '🕷️'], ['Labeling Depot', '🏷️'], ['Web Archive', '📚']]],
+   ['power', 2, [['Solar Array', '☀️'], ['Fusion Plant', '⚛️'], ['Wind Farm', '🌬️']]],
+   ['chips', 2, [['Wafer Fab', '💿'], ['GPU Foundry', '🎛️'], ['Datacenter Row', '🗄️'], ['Cooling Loop', '❄️']]],
+   ['models', 3, [['Chatbot Co', '🗨️'], ['Vision Lab', '👁️'], ['Code Copilot', '⌨️'], ['Voice Clone', '🎙️']]],
+   ['robots', 3, [['Drone Works', '🚁'], ['Humanoid Inc', '🦾'], ['Robotaxi Fleet', '🚕'], ['Warehouse Bots', '📦']]],
+   ['frontier', 4, [['Reasoning Engine', '♟️'], ['Agent Swarm', '🐝'], ['AGI Lab', '✨']]]
+  ].forEach(function (row) {
+    row[2].forEach(function (a) { CARDS.push({ k: 'asset', g: row[0], v: row[1], n: a[0], i: a[1] }); });
+  });
+  add(1, { k: 'wild', gs: ['data', 'power'], v: 1, n: 'Hybrid Cloud', i: '🔀' });
+  add(1, { k: 'wild', gs: ['chips', 'models'], v: 2, n: 'Full-stack Lab', i: '🔀' });
+  add(1, { k: 'wild', gs: ['robots', 'frontier'], v: 3, n: 'Moonshot Team', i: '🔀' });
+  add(2, { k: 'wild', gs: ORDER.slice(), v: 0, n: 'Generalist', i: '🃏' });
+  [[1, 5], [2, 4], [3, 3], [4, 2], [5, 2]].forEach(function (c) { add(c[1], { k: 'cash', v: c[0], n: '₮' + c[0] + ' Funding', i: '🪙' }); });
+  [['invoice', 7], ['hype', 2], ['fund', 6], ['lawsuit', 3], ['poach', 3], ['merger', 2], ['takeover', 2], ['halluc', 2], ['scrape', 2], ['tune', 3], ['guard', 3]]
+    .forEach(function (a) { add(a[1], { k: 'act', a: a[0], v: ACTS[a[0]].v, n: ACTS[a[0]].n, i: ACTS[a[0]].i }); });
 
-  function isOwnable(sp) { return sp.t === 'prop' || sp.t === 'power'; }
-  function upCost(i) { return Math.round(SPACES[i].p * 0.5); }
-  function groupTiles(g) { var r = []; SPACES.forEach(function (sp, i) { if (sp.g === g) r.push(i); }); return r; }
-  function ownerOf(s, i) { return s.owned[i] ? s.owned[i].o : -1; }
-  function tilesOf(s, p) { return Object.keys(s.owned).map(Number).filter(function (i) { return s.owned[i].o === p; }).sort(function (a, b) { return a - b; }); }
-  function ownsGroup(s, p, g) { return groupTiles(g).every(function (i) { return ownerOf(s, i) === p; }); }
-
-  /** Rent for tile i at a given level (defaults to its current level and owner). */
-  function rentAt(s, i, level, owner) {
-    var sp = SPACES[i];
-    if (owner === undefined) owner = ownerOf(s, i);
-    if (sp.t === 'power') {
-      var k = owner < 0 ? 1 : groupTiles('power').filter(function (j) { return ownerOf(s, j) === owner; }).length;
-      return POWER_RENT[Math.max(1, k)];
-    }
-    if (level === undefined) level = s.owned[i] ? s.owned[i].l : 0;
-    var r = Math.round(sp.p * 0.1) * LEVEL_MULT[level];
-    if (owner >= 0 && ownsGroup(s, owner, sp.g)) r *= 2;
+  // ---- queries ----
+  function isAsset(c) { return CARDS[c].k === 'asset' || CARDS[c].k === 'wild'; }
+  function isComplete(p, g) { return p.sets[g].length >= SECT[g].size; }
+  function stacks(p) { return ORDER.filter(function (g) { return isComplete(p, g); }).length; }
+  function rent(p, g) {
+    var n = p.sets[g].length; if (!n) return 0;
+    return SECT[g].rent[Math.min(n, SECT[g].size) - 1] + (isComplete(p, g) ? TUNE_BONUS * p.ups[g].length : 0);
+  }
+  function sectorOf(p, c) { for (var k = 0; k < ORDER.length; k++) if (p.sets[ORDER[k]].indexOf(c) >= 0) return ORDER[k]; return null; }
+  function bankTotal(p) { return p.bank.reduce(function (a, c) { return a + CARDS[c].v; }, 0); }
+  /** Cards a player can pay with: everything in the bank, plus assets on the table that have a value. */
+  function payable(p) {
+    var r = p.bank.slice();
+    ORDER.forEach(function (g) { p.sets[g].forEach(function (c) { if (CARDS[c].v > 0) r.push(c); }); });
     return r;
   }
-  function sellValue(s, i) { return Math.round((SPACES[i].p + s.owned[i].l * upCost(i)) / 2); }
-  function netWorth(s, p) {
-    return s.players[p].cash + tilesOf(s, p).reduce(function (a, i) { return a + SPACES[i].p + s.owned[i].l * upCost(i); }, 0);
-  }
+  /** Rival assets that Poach and Merger may take (not in complete stacks). */
+  function loose(p) { var r = []; ORDER.forEach(function (g) { if (!isComplete(p, g)) r = r.concat(p.sets[g]); }); return r; }
+  function hasGuard(p) { return p.hand.some(function (c) { return CARDS[c].a === 'guard'; }); }
+  /** Index of the player who has to do something right now. */
+  function actor(s) { return s.phase === 'respond' ? s.pending.to : s.turn; }
 
+  // ---- helpers that change state ----
   function log(s, p, text) { s.log.push({ p: p, t: text }); if (s.log.length > 40) s.log.shift(); }
-  function fmt(n) { return '₮' + n.toLocaleString('en-CA'); }
-
-  var CARDS = [
-    { t: 'Seed round closes. Collect ₮150.', f: function (s, i) { s.players[i].cash += 150; } },
-    { t: 'You top a benchmark leaderboard. Collect ₮120.', f: function (s, i) { s.players[i].cash += 120; } },
-    { t: 'Government research grant. Collect ₮200.', f: function (s, i) { s.players[i].cash += 200; } },
-    { t: 'Enterprise contract signed. Collect ₮100.', f: function (s, i) { s.players[i].cash += 100; } },
-    { t: 'GPU shortage. Pay ₮80 for spot capacity.', f: function (s, i) { s.players[i].cash -= 80; } },
-    { t: 'Model weights leak online. Pay ₮60 for incident response.', f: function (s, i) { s.players[i].cash -= 60; } },
-    { t: 'Data licensing lawsuit. Pay ₮120.', f: function (s, i) { s.players[i].cash -= 120; } },
-    { t: 'Acqui-hire payout. Collect ₮50 from each rival.', f: function (s, i) {
-      s.players.forEach(function (q, j) { if (j !== i && !q.out) { q.cash -= 50; s.players[i].cash += 50; } });
-    } },
-    { t: 'A rival poaches your lead researcher. Pay each rival ₮40.', f: function (s, i) {
-      s.players.forEach(function (q, j) { if (j !== i && !q.out) { q.cash += 40; s.players[i].cash -= 40; } });
-    } },
-    { t: 'Major outage. Go straight to Rate Limited and skip your next turn.', f: function (s, i) {
-      s.players[i].pos = LIMIT_POS; s.players[i].skip = 1;
-    } },
-    { t: 'Clean reboot. Jump to Boot Up and collect ₮' + START_BONUS + '.', f: function (s, i) {
-      s.players[i].pos = 0; s.players[i].cash += START_BONUS;
-    } },
-    { t: 'Open-source goodwill. Free upgrade on your cheapest tile, or ₮60 if you have nothing to upgrade.', f: function (s, i) {
-      var c = tilesOf(s, i).filter(function (k) { return SPACES[k].t === 'prop' && s.owned[k].l < MAX_LEVEL; })
-        .sort(function (a, b) { return SPACES[a].p - SPACES[b].p; });
-      if (c.length) { s.owned[c[0]].l++; log(s, i, SPACES[c[0]].n + ' upgraded to v' + (s.owned[c[0]].l + 1) + ' for free.'); }
-      else s.players[i].cash += 60;
-    } },
-    { t: 'Momentum. Advance 3 spaces.', f: function (s, i) { move(s, i, 3); land(s); } }
-  ];
-
-  function move(s, i, steps) {
-    var p = s.players[i], to = p.pos + steps;
-    if (to >= N) { to -= N; p.cash += START_BONUS; log(s, i, 'passed Boot Up and collected ' + fmt(START_BONUS) + '.'); }
-    p.pos = to;
-  }
-
-  function land(s, rnd) {
-    var i = s.turn, p = s.players[i], sp = SPACES[p.pos];
-    s.phase = 'end';
-    if (isOwnable(sp)) {
-      var o = ownerOf(s, p.pos);
-      if (o < 0) {
-        if (p.cash >= sp.p) s.phase = 'buy';
-        else log(s, i, 'landed on ' + sp.n + ' but cannot afford ' + fmt(sp.p) + '.');
-      } else if (o !== i) {
-        var r = rentAt(s, p.pos);
-        p.cash -= r; s.players[o].cash += r;
-        log(s, i, 'landed on ' + sp.n + ' and paid ' + s.players[o].name + ' ' + fmt(r) + ' rent.');
-      } else log(s, i, 'landed on their own ' + sp.n + '.');
-    } else if (sp.t === 'card') {
-      var c = CARDS[Math.floor(rnd() * CARDS.length)];
-      s.card = { text: c.t, seq: s.seq };
-      log(s, i, 'drew a prompt: ' + c.t);
-      c.f(s, i);
-    } else if (sp.t === 'tax') {
-      p.cash -= sp.a; log(s, i, 'landed on ' + sp.n + ' and paid ' + fmt(sp.a) + '.');
-    } else if (sp.t === 'bonus') {
-      p.cash += sp.a; log(s, i, 'landed on ' + sp.n + ' and collected ' + fmt(sp.a) + '.');
-    } else if (sp.t === 'halluc') {
-      var fine = Math.max(30, 30 * tilesOf(s, i).length);
-      p.cash -= fine; log(s, i, 'hit a Hallucination and paid ' + fmt(fine) + '.');
-    } else if (sp.t === 'limit') {
-      p.skip = 1; log(s, i, 'got Rate Limited and will skip a turn.');
-    } else if (sp.t === 'rest') {
-      log(s, i, 'is relaxing at the Open Source Commons.');
+  function take(arr, c) { var i = arr.indexOf(c); if (i < 0) return false; arr.splice(i, 1); return true; }
+  function shuffle(a, rnd) { for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(rnd() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+  function draw(s, i, n, rnd) {
+    for (var k = 0; k < n; k++) {
+      if (!s.deck.length) { s.deck = shuffle(s.discard, rnd); s.discard = []; }
+      if (!s.deck.length) return;
+      s.players[i].hand.push(s.deck.pop());
     }
   }
-
   function checkWin(s) {
-    var alive = [], best = -1;
-    s.players.forEach(function (p, i) { if (!p.out) alive.push(i); });
-    if (alive.length === 1) best = alive[0];
-    else alive.forEach(function (i) {
-      if (netWorth(s, i) >= s.goal && (best < 0 || netWorth(s, i) > netWorth(s, best))) best = i;
+    for (var i = 0; i < 2; i++) if (stacks(s.players[i]) >= WIN_STACKS) {
+      s.status = 'over'; s.phase = 'over'; s.winner = i; s.pending = null;
+      log(s, i, 'completed ' + WIN_STACKS + ' stacks and wins.');
+      return true;
+    }
+    return false;
+  }
+  function nextTurn(s, rnd) {
+    s.turn = 1 - s.turn; s.plays = 0; s.hype = false; s.phase = 'play';
+    draw(s, s.turn, s.players[s.turn].hand.length ? 2 : 5, rnd);
+  }
+  function transfer(s, from, to, cards) {
+    var a = s.players[from], b = s.players[to];
+    cards.forEach(function (c) {
+      if (take(a.bank, c)) b.bank.push(c);
+      else { var g = sectorOf(a, c); take(a.sets[g], c); b.sets[g].push(c); }
     });
-    if (best >= 0) {
-      s.status = 'over'; s.winner = best; s.phase = 'over';
-      log(s, best, 'wins the race with a net worth of ' + fmt(netWorth(s, best)) + '.');
+  }
+  function finish(s) { s.pending = null; s.phase = 'play'; checkWin(s); }
+
+  /** Carry out the pending action once nobody blocks it any further. */
+  function settle(s, rnd) {
+    var pd = s.pending, A = s.players[pd.from], V = s.players[pd.target], names;
+    if (pd.neg) { log(s, pd.target, 'blocked ' + pd.label + ' with a Guardrail.'); return finish(s); }
+    if (pd.kind === 'pay') {
+      var all = payable(V), total = all.reduce(function (a, c) { return a + CARDS[c].v; }, 0);
+      if (total > pd.amt) { pd.stage = 'pay'; pd.to = pd.target; return; }
+      transfer(s, pd.target, pd.from, all);
+      log(s, pd.target, all.length ? 'could only pay ₮' + total + ' of ₮' + pd.amt + '.' : 'had nothing to pay with.');
+    } else if (pd.kind === 'poach') {
+      if (loose(V).indexOf(pd.x) >= 0) { transfer(s, pd.target, pd.from, [pd.x]); log(s, pd.from, 'poached ' + CARDS[pd.x].n + '.'); }
+    } else if (pd.kind === 'merger') {
+      if (loose(V).indexOf(pd.x) >= 0 && loose(A).indexOf(pd.y) >= 0) {
+        transfer(s, pd.target, pd.from, [pd.x]); transfer(s, pd.from, pd.target, [pd.y]);
+        log(s, pd.from, 'swapped ' + CARDS[pd.y].n + ' for ' + CARDS[pd.x].n + '.');
+      }
+    } else if (pd.kind === 'takeover') {
+      if (isComplete(V, pd.g)) {
+        A.sets[pd.g] = A.sets[pd.g].concat(V.sets[pd.g]); V.sets[pd.g] = [];
+        A.ups[pd.g] = A.ups[pd.g].concat(V.ups[pd.g]); V.ups[pd.g] = [];
+        log(s, pd.from, 'took over the ' + SECT[pd.g].n + ' stack.');
+      }
+    } else if (pd.kind === 'halluc') {
+      names = [];
+      for (var k = 0; k < 2 && V.hand.length; k++) { var c = V.hand.splice(Math.floor(rnd() * V.hand.length), 1)[0]; s.discard.push(c); names.push(CARDS[c].n); }
+      log(s, pd.target, names.length ? 'lost ' + names.join(' and ') + ' to a Hallucination.' : 'had no cards to lose.');
+    } else if (pd.kind === 'scrape') {
+      if (V.hand.length) { A.hand.push(V.hand.splice(Math.floor(rnd() * V.hand.length), 1)[0]); log(s, pd.from, 'scraped a card from ' + V.name + '\'s hand.'); }
     }
-    return best >= 0;
+    finish(s);
+  }
+  function attack(s, by, pd, rnd) {
+    pd.from = by; pd.target = 1 - by; pd.to = 1 - by; pd.neg = false; pd.stage = 'block';
+    s.pending = pd; s.phase = 'respond';
+    if (!hasGuard(s.players[pd.to])) settle(s, rnd);
   }
 
-  function nextTurn(s) {
-    for (var k = 0; k < s.players.length * 2; k++) {
-      s.turn = (s.turn + 1) % s.players.length;
-      var p = s.players[s.turn];
-      if (p.out) continue;
-      if (p.skip) { p.skip = 0; log(s, s.turn, 'is Rate Limited and skips this turn.'); continue; }
-      break;
-    }
-    s.phase = 'roll'; s.again = false;
-  }
-
-  /** players: [{id,name,tok}] */
-  function newGame(players, goal, rnd, seq) {
-    return {
-      seq: seq || 1, status: 'playing', goal: goal,
-      players: players.map(function (p) { return { id: p.id, name: p.name, tok: p.tok, cash: START_CASH, pos: 0, skip: 0, out: false }; }),
-      turn: Math.floor(rnd() * players.length), phase: 'roll', again: false,
-      roll: null, card: null, owned: {}, log: [], winner: null
+  /** players: [{id,name,tok}, {id,name,tok}] */
+  function newGame(players, rnd, seq) {
+    var deck = shuffle(CARDS.map(function (_, i) { return i; }), rnd);
+    var s = {
+      seq: seq || 1, status: 'playing', phase: 'play', turn: Math.floor(rnd() * 2), plays: 0, hype: false,
+      deck: deck, discard: [], pending: null, log: [], winner: null,
+      players: players.map(function (p) {
+        var sets = {}, ups = {}; ORDER.forEach(function (g) { sets[g] = []; ups[g] = []; });
+        return { id: p.id, name: p.name, tok: p.tok, hand: [], bank: [], sets: sets, ups: ups };
+      })
     };
+    draw(s, 0, 5, rnd); draw(s, 1, 5, rnd); draw(s, s.turn, 2, rnd);
+    return s;
   }
 
-  /** Returns the next state, or null when the action is not legal right now.
-      Every action belongs to the player whose turn it is. */
-  function apply(state, a, rnd) {
-    if (state.status !== 'playing') return null;
-    var s = JSON.parse(JSON.stringify(state));
-    s.seq++;
-    var i = s.turn, p = s.players[i], t;
+  /** Returns the next state, or null if `by` may not do `a` right now. */
+  function apply(state, a, rnd, by) {
+    if (state.status !== 'playing' || by !== actor(state)) return null;
+    var s = JSON.parse(JSON.stringify(state)); s.seq++;
+    var me = s.players[by], opp = s.players[1 - by], pd = s.pending, c = a.c, card = CARDS[c], g = a.g;
 
-    if (a.t === 'roll') {
-      if (s.phase !== 'roll') return null;
-      var d1 = 1 + Math.floor(rnd() * 6), d2 = 1 + Math.floor(rnd() * 6), from = p.pos;
-      s.card = null;
-      log(s, i, 'rolled ' + d1 + ' + ' + d2 + '.');
-      move(s, i, d1 + d2);
-      s.roll = { seq: s.seq, p: i, from: from, d: [d1, d2] };
-      land(s, rnd);
-      s.again = d1 === d2 && !p.skip;
-    } else if (a.t === 'buy') {
-      if (s.phase !== 'buy') return null;
-      t = SPACES[p.pos];
-      p.cash -= t.p; s.owned[p.pos] = { o: i, l: 0 };
-      log(s, i, 'bought ' + t.n + ' for ' + fmt(t.p) + '.');
-      s.phase = 'end';
-    } else if (a.t === 'pass') {
-      if (s.phase !== 'buy') return null;
-      log(s, i, 'passed on ' + SPACES[p.pos].n + '.');
-      s.phase = 'end';
-    } else if (a.t === 'upgrade') {
-      t = s.owned[a.i];
-      if (s.phase === 'buy' || !t || t.o !== i || SPACES[a.i].t !== 'prop' || t.l >= MAX_LEVEL || p.cash < upCost(a.i)) return null;
-      p.cash -= upCost(a.i); t.l++;
-      log(s, i, 'upgraded ' + SPACES[a.i].n + ' to v' + (t.l + 1) + ' for ' + fmt(upCost(a.i)) + '.');
-    } else if (a.t === 'sell') {
-      t = s.owned[a.i];
-      if (s.phase === 'buy' || !t || t.o !== i) return null;
-      var v = sellValue(s, a.i);
-      p.cash += v; delete s.owned[a.i];
-      log(s, i, 'sold ' + SPACES[a.i].n + ' back to the bank for ' + fmt(v) + '.');
-    } else if (a.t === 'end') {
-      if (s.phase !== 'end' || p.cash < 0) return null;
-      if (!checkWin(s)) { if (s.again) { s.again = false; s.phase = 'roll'; } else nextTurn(s); }
-    } else if (a.t === 'bankrupt') {
-      if (s.phase === 'buy') return null;
-      p.out = true;
-      tilesOf(s, i).forEach(function (k) { delete s.owned[k]; });
-      log(s, i, 'went bankrupt. Their tiles return to the bank.');
-      if (!checkWin(s)) nextTurn(s);
+    if (s.phase === 'respond') {
+      if (pd.stage === 'block') {
+        if (a.t === 'accept') settle(s, rnd);
+        else if (a.t === 'block') {
+          var gc = me.hand.filter(function (x) { return CARDS[x].a === 'guard'; })[0];
+          if (gc === undefined) return null;
+          take(me.hand, gc); s.discard.push(gc);
+          pd.neg = !pd.neg; pd.to = 1 - by;
+          log(s, by, 'played a Guardrail.');
+          if (!hasGuard(s.players[pd.to])) settle(s, rnd);
+        } else return null;
+      } else {
+        if (a.t !== 'pay' || !a.cards) return null;
+        var all = payable(me), seen = {}, sum = 0;
+        for (var k = 0; k < a.cards.length; k++) {
+          if (all.indexOf(a.cards[k]) < 0 || seen[a.cards[k]]) return null;
+          seen[a.cards[k]] = 1; sum += CARDS[a.cards[k]].v;
+        }
+        if (sum < pd.amt && a.cards.length < all.length) return null;
+        transfer(s, by, pd.from, a.cards);
+        log(s, by, 'paid ' + s.players[pd.from].name + ' ₮' + sum + '.');
+        finish(s);
+      }
+      return s;
+    }
+
+    if (s.phase === 'discard') {
+      if (a.t !== 'discard' || !take(me.hand, c)) return null;
+      s.discard.push(c);
+      if (me.hand.length <= HAND_LIMIT) nextTurn(s, rnd);
+      return s;
+    }
+
+    // ---- play phase ----
+    if (a.t === 'end') {
+      log(s, by, 'ended their turn.');
+      if (me.hand.length > HAND_LIMIT) s.phase = 'discard'; else nextTurn(s, rnd);
+      return s;
+    }
+    if (a.t === 'move') {   // re-assign a wild already on the table (free)
+      var from = sectorOf(me, c);
+      if (!from || !card || card.k !== 'wild' || card.gs.indexOf(g) < 0 || g === from) return null;
+      take(me.sets[from], c); me.sets[g].push(c);
+      log(s, by, 'moved ' + card.n + ' to ' + SECT[g].n + '.');
+      checkWin(s); return s;
+    }
+    if (s.plays >= PLAYS || !card || me.hand.indexOf(c) < 0) return null;
+
+    if (a.t === 'bank') {
+      if (isAsset(c) || card.v <= 0) return null;
+      take(me.hand, c); me.bank.push(c);
+      log(s, by, 'banked ₮' + card.v + '.');
+    } else if (a.t === 'asset') {
+      if (!isAsset(c)) return null;
+      if (card.k === 'asset') g = card.g; else if (card.gs.indexOf(g) < 0) return null;
+      take(me.hand, c); me.sets[g].push(c);
+      log(s, by, 'added ' + card.n + ' to ' + SECT[g].n + '.');
+    } else if (a.t === 'act') {
+      if (card.k !== 'act' || card.a === 'guard') return null;
+      var kind = card.a, pend = null;
+      if (kind === 'fund') { take(me.hand, c); draw(s, by, 2, rnd); log(s, by, 'raised a Funding Round and drew 2 cards.'); }
+      else if (kind === 'hype') { if (s.hype) return null; s.hype = true; log(s, by, 'started a Hype Cycle. Their next Invoice is doubled.'); }
+      else if (kind === 'tune') {
+        if (!SECT[g] || !isComplete(me, g) || me.ups[g].length >= MAX_TUNES) return null;
+        take(me.hand, c); me.ups[g].push(c); s.plays++;
+        log(s, by, 'fine-tuned their ' + SECT[g].n + ' stack.');
+        return s;
+      } else if (kind === 'invoice') {
+        if (!SECT[g] || !me.sets[g].length) return null;
+        var amt = rent(me, g) * (s.hype ? 2 : 1); s.hype = false;
+        pend = { kind: 'pay', amt: amt, label: 'the ' + SECT[g].n + ' Invoice', text: 'sent a ₮' + amt + ' Invoice for ' + SECT[g].n + '.' };
+      } else if (kind === 'lawsuit') pend = { kind: 'pay', amt: LAWSUIT, label: 'the Lawsuit', text: 'filed a Lawsuit for ₮' + LAWSUIT + '.' };
+      else if (kind === 'poach') {
+        if (loose(opp).indexOf(a.x) < 0) return null;
+        pend = { kind: 'poach', x: a.x, label: 'the Poach', text: 'is poaching ' + CARDS[a.x].n + '.' };
+      } else if (kind === 'merger') {
+        if (loose(opp).indexOf(a.x) < 0 || loose(me).indexOf(a.y) < 0) return null;
+        pend = { kind: 'merger', x: a.x, y: a.y, label: 'the Merger', text: 'proposed a Merger: ' + CARDS[a.y].n + ' for ' + CARDS[a.x].n + '.' };
+      } else if (kind === 'takeover') {
+        if (!SECT[g] || !isComplete(opp, g)) return null;
+        pend = { kind: 'takeover', g: g, label: 'the Hostile Takeover', text: 'launched a Hostile Takeover of ' + SECT[g].n + '.' };
+      } else if (kind === 'halluc') pend = { kind: 'halluc', label: 'the Hallucination', text: 'played Hallucination.' };
+      else if (kind === 'scrape') pend = { kind: 'scrape', label: 'the Scrape', text: 'played Scrape.' };
+      if (kind !== 'fund') take(me.hand, c);
+      s.discard.push(c); s.plays++;
+      if (pend) { log(s, by, pend.text); attack(s, by, pend, rnd); }
+      return s;
     } else return null;
+    s.plays++;
+    checkWin(s);
     return s;
   }
 
   var api = {
-    SPACES: SPACES, GROUPS: GROUPS, N: N, START_BONUS: START_BONUS, MAX_LEVEL: MAX_LEVEL, LEVEL_MULT: LEVEL_MULT, POWER_RENT: POWER_RENT,
-    isOwnable: isOwnable, upCost: upCost, groupTiles: groupTiles, ownerOf: ownerOf, tilesOf: tilesOf, ownsGroup: ownsGroup,
-    rentAt: rentAt, sellValue: sellValue, netWorth: netWorth, newGame: newGame, apply: apply, fmt: fmt
+    CARDS: CARDS, SECT: SECT, ORDER: ORDER, ACTS: ACTS, PLAYS: PLAYS, HAND_LIMIT: HAND_LIMIT, WIN_STACKS: WIN_STACKS,
+    TUNE_BONUS: TUNE_BONUS, MAX_TUNES: MAX_TUNES, LAWSUIT: LAWSUIT,
+    isAsset: isAsset, isComplete: isComplete, stacks: stacks, rent: rent, sectorOf: sectorOf, bankTotal: bankTotal,
+    payable: payable, loose: loose, hasGuard: hasGuard, actor: actor, newGame: newGame, apply: apply
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.Engine = api;

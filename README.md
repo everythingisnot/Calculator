@@ -1,7 +1,8 @@
 # Token Tycoons
 
-An original AI-themed property-trading board game for two phones (or one phone passed around).
-Buy tiles across the AI stack, upgrade them, collect rent, and be the first to reach the net-worth goal.
+An original AI-themed set-collecting card game for two phones (or one phone passed around).
+Draw 2, play up to 3 cards a turn: build asset stacks, bank funding, and hit your rival with invoices,
+lawsuits, poaching and hostile takeovers (or block theirs with a Guardrail). First to 3 complete stacks wins.
 
 ## Play on two phones
 
@@ -24,4 +25,4 @@ resumes the same game.
 - `engine.js` – rules (pure functions, shared by both phones)
 - `app.js` – interface and phone-to-phone sync
 - `vendor/peerjs.min.js` – PeerJS 1.5.4 (MIT)
-- `test/simulate.js` – `node test/simulate.js` plays 1,200 bot games to check rules and game length
+- `test/simulate.js` – `node test/simulate.js` plays 2,000 bot games to check the rules and game length
