@@ -1,0 +1,317 @@
+<title>Inkwell Isles</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Write a word, watch it appear, and use it to solve puzzles on floating 3D islands.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Figtree:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: full-bleed 3D canvas; glass "ink" panels pinned to the corners; quill bar centred at the bottom. */
+:root {
+  --night: #0e1330;
+  --panel: rgba(15, 20, 48, 0.72);
+  --panel-solid: #161c42;
+  --line: rgba(220, 228, 255, 0.12);
+  --paper: #f4f2ff;
+  --muted: #a9b0d8;
+  --ink: #7690ff;
+  --ink-deep: #4157e0;
+  --gold: #ffc65a;
+  --ember: #ff6b57;
+  --leaf: #5fd6a0;
+  --display: "Fredoka", "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+  --body: "Figtree", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --r: 16px;
+  color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  margin: 0; overflow: hidden; background: var(--night); color: var(--paper);
+  font-family: var(--body); font-size: 15px; -webkit-font-smoothing: antialiased;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+}
+button, input, select { font: inherit; color: inherit; }
+#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+.panel {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+  backdrop-filter: blur(14px) saturate(1.3); -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  box-shadow: 0 10px 40px rgba(4, 6, 20, 0.35);
+}
+.eyebrow { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1, h2, h3 { font-family: var(--display); margin: 0; text-wrap: balance; font-weight: 600; }
+.btn, .hud-top button, .screen button {
+  appearance: none; border: 1px solid var(--line); background: rgba(255,255,255,0.06);
+  border-radius: 12px; padding: 9px 14px; cursor: pointer; font-weight: 600; font-size: 14px;
+  transition: background .15s, transform .1s, border-color .15s;
+}
+.btn:hover, .hud-top button:hover, .screen button:hover { background: rgba(255,255,255,0.12); }
+button:active { transform: translateY(1px); }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.primary { background: linear-gradient(180deg, var(--ink), var(--ink-deep)) !important; border-color: rgba(255,255,255,0.25) !important; box-shadow: 0 6px 22px rgba(65, 87, 224, 0.45); }
+.primary:hover { filter: brightness(1.08); }
+
+/* ---------- HUD ---------- */
+#hud { position: fixed; inset: 0; pointer-events: none; }
+#hud > * { pointer-events: auto; }
+.hud-top {
+  position: absolute; left: 0; right: 0; top: 0; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+  padding: calc(12px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px));
+  pointer-events: none !important;
+}
+.hud-top > * { pointer-events: auto; }
+.goals-panel { padding: 12px 16px 12px; min-width: 0; max-width: 340px; }
+.goals-panel h2 { font-size: 22px; margin: 2px 0 8px; }
+#goals { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+#goals li { display: grid; grid-template-columns: 18px 1fr; gap: 8px; align-items: start; font-size: 14px; line-height: 1.3; color: var(--paper); }
+#goals li i { width: 16px; height: 16px; margin-top: 1px; border-radius: 50%; border: 2px solid var(--muted); box-sizing: border-box; }
+#goals li.done { color: var(--muted); }
+#goals li.done span { text-decoration: line-through; text-decoration-color: rgba(255,255,255,0.35); }
+#goals li.done i { background: var(--leaf); border-color: var(--leaf); box-shadow: 0 0 10px rgba(95,214,160,0.6); }
+#goals li.final i { border-color: var(--gold); }
+.goal-toggle { display: none; }
+.status-panel { padding: 12px 14px; display: grid; gap: 10px; min-width: 220px; }
+.hearts { display: flex; gap: 4px; }
+.hearts svg { width: 22px; height: 22px; filter: drop-shadow(0 2px 6px rgba(255,107,87,0.4)); transition: transform .3s; }
+.hearts svg.lost { opacity: .25; filter: none; transform: scale(.85); }
+.ink-label { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); font-weight: 600; }
+.ink-label b { color: var(--paper); font-variant-numeric: tabular-nums; }
+.ink-bar { position: relative; height: 10px; border-radius: 6px; background: rgba(255,255,255,0.08); margin-top: 5px; overflow: hidden; }
+.ink-bar i { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 6px; background: linear-gradient(90deg, #5a73ff, #9a7dff); transition: width .35s cubic-bezier(.2,.8,.2,1); box-shadow: 0 0 12px rgba(118,144,255,.7); }
+.ink-bar i.over { background: linear-gradient(90deg, #ff9b57, var(--ember)); }
+.ink-bar em { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--gold); border-radius: 2px; }
+.ink-par-text { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.ink-par-text b { color: var(--gold); font-weight: 600; }
+.tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.tools button { padding: 6px 10px; font-size: 13px; }
+#btn-sound[aria-pressed="false"] { opacity: .55; }
+
+#toasts { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(132px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column-reverse; align-items: center; gap: 6px; width: min(560px, calc(100% - 32px)); pointer-events: none !important; }
+.toast { padding: 9px 14px; border-radius: 12px; background: rgba(12, 16, 40, 0.86); border: 1px solid var(--line); font-size: 14px; line-height: 1.35; text-align: center; animation: toastIn .3s cubic-bezier(.2,.9,.3,1.2); max-width: 100%; }
+.toast.good { border-color: rgba(95,214,160,0.5); }
+.toast.bad { border-color: rgba(255,107,87,0.55); }
+.toast.gold { border-color: rgba(255,198,90,0.6); }
+.toast b { color: var(--gold); font-weight: 600; }
+.toast.out { opacity: 0; transform: translateY(6px); transition: all .4s; }
+@keyframes toastIn { from { opacity: 0; transform: translateY(10px) scale(.96); } }
+
+.quill-wrap { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); width: min(620px, calc(100% - 32px)); display: grid; gap: 6px; }
+.quill { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 14px; border-radius: 18px; }
+.quill svg { width: 22px; height: 22px; flex: none; color: var(--gold); }
+.quill input { flex: 1; min-width: 0; background: transparent; border: 0; outline: none; font-size: 18px; padding: 10px 2px; font-family: var(--display); font-weight: 500; letter-spacing: .01em; user-select: text; -webkit-user-select: text; }
+.quill input::placeholder { color: rgba(200, 206, 240, 0.5); }
+.quill button { border-radius: 13px; padding: 11px 20px; font-size: 15px; }
+.preview { min-height: 22px; font-size: 13px; color: var(--muted); padding: 0 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: center; text-shadow: 0 1px 8px rgba(0,0,0,.6); }
+.preview .chip { background: rgba(12,16,40,0.7); }
+.recent { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; min-height: 0; }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 3px 10px; background: rgba(255,255,255,0.08); border: 1px solid var(--line); color: var(--paper); }
+.chip.t-fly { color: #b9d4ff; } .chip.t-fire { color: #ffb38a; } .chip.t-water { color: #8fd8ff; } .chip.t-danger { color: #ff9f93; } .chip.t-gold { color: var(--gold); }
+button.chip { cursor: pointer; }
+
+#rule-banner { position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); padding: 7px 14px; border-radius: 999px; background: rgba(255,107,87,0.16); border: 1px solid rgba(255,107,87,0.45); font-size: 13px; font-weight: 600; white-space: nowrap; }
+
+/* world labels */
+#labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+.wlabel { position: absolute; left: 0; top: 0; transform: translate(-50%, -100%); white-space: nowrap; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: rgba(12, 16, 40, 0.78); border: 1px solid var(--line); color: var(--paper); transition: opacity .3s; will-change: transform; }
+.wlabel b { color: var(--gold); font-weight: 700; }
+.wlabel.done { opacity: 0 !important; }
+.wlabel.warn { border-color: rgba(255,107,87,0.6); color: #ffd2cb; }
+.wlabel.small { font-size: 11px; padding: 2px 8px; opacity: .85; }
+
+#vignette { position: fixed; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, transparent 50%, rgba(255, 40, 30, 0.55) 100%); transition: opacity .25s; }
+
+/* object card */
+.card { position: fixed; width: min(300px, calc(100% - 32px)); padding: 14px; display: grid; gap: 10px; z-index: 5; }
+.card h3 { font-size: 20px; text-transform: capitalize; }
+.card .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; font-size: 13px; }
+.card .stats div { display: flex; justify-content: space-between; color: var(--muted); }
+.card .stats b { color: var(--paper); font-variant-numeric: tabular-nums; font-weight: 600; }
+.card .tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.card .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.card .acts button { flex: 1; padding: 8px 10px; }
+.card .x { position: absolute; right: 8px; top: 8px; border: 0 !important; background: transparent !important; font-size: 18px; padding: 4px 8px !important; }
+
+/* ---------- screens ---------- */
+.screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding-block: max(20px, env(safe-area-inset-top, 0px)) max(20px, env(safe-area-inset-bottom, 0px)); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); box-sizing: border-box; z-index: 10; overflow-y: auto; }
+.screen.modal { background: rgba(8, 10, 28, 0.45); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+#screen-title { justify-content: flex-start; align-items: flex-end; background: linear-gradient(90deg, rgba(10,13,34,0.82) 0%, rgba(10,13,34,0.35) 45%, transparent 70%); }
+.title-block { max-width: 520px; display: grid; gap: 18px; padding: 0 0 6vh 3vw; }
+.title-block h1 { font-size: clamp(56px, 11vw, 124px); line-height: .88; letter-spacing: -0.02em; font-weight: 700; background: linear-gradient(180deg, #ffffff 10%, #c9d2ff 60%, #8ea2ff 100%); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 6px 30px rgba(60, 80, 220, .45)); }
+.title-block h1 span { display: block; background: linear-gradient(180deg, #ffe6a8 0%, var(--gold) 70%, #f39a3a 100%); -webkit-background-clip: text; background-clip: text; }
+.title-block p { margin: 0; font-size: 17px; line-height: 1.5; color: #d9dcf7; max-width: 44ch; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.big { font-size: 18px !important; padding: 14px 30px !important; border-radius: 16px !important; font-family: var(--display); }
+.settings { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); align-items: center; }
+.settings label { display: flex; gap: 8px; align-items: center; }
+.settings select { background: rgba(255,255,255,0.08); border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; }
+.settings select option { background: var(--panel-solid); }
+
+.sheet { width: min(760px, 100%); padding: 22px; display: grid; gap: 16px; max-height: 100%; overflow-y: auto; box-sizing: border-box; background: rgba(15, 20, 48, 0.88); }
+.sheet.narrow { width: min(480px, 100%); }
+.sheet-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.sheet-head h2 { font-size: 30px; }
+.isles { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+.isle { text-align: left; display: grid; gap: 6px; padding: 12px !important; border-radius: 14px !important; min-height: 112px; align-content: start; position: relative; overflow: hidden; }
+.isle .num { font-family: var(--display); font-size: 13px; color: var(--muted); }
+.isle .nm { font-family: var(--display); font-size: 18px; font-weight: 600; line-height: 1.1; }
+.isle .stars { color: var(--gold); letter-spacing: 2px; font-size: 15px; margin-top: auto; }
+.isle .stars s { color: rgba(255,255,255,0.18); text-decoration: none; }
+.isle .sw { position: absolute; right: -14px; top: -14px; width: 56px; height: 56px; border-radius: 50%; opacity: .55; filter: blur(2px); }
+.isle[disabled] { opacity: .4; cursor: not-allowed; }
+.isle.sandbox { border-style: dashed !important; }
+.brief-story { font-size: 16px; line-height: 1.55; color: #dfe2fb; margin: 0; max-width: 60ch; }
+.brief-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.stat { padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.05); border: 1px solid var(--line); }
+.stat .v { font-family: var(--display); font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .k { font-size: 12px; color: var(--muted); }
+.rules { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.rules li { padding: 9px 12px; border-radius: 12px; background: rgba(255,107,87,0.1); border: 1px solid rgba(255,107,87,0.3); font-size: 14px; line-height: 1.4; }
+.rules li b { color: #ffc2b8; }
+.star-row { display: flex; gap: 10px; justify-content: center; font-size: 46px; }
+.star-row span { color: rgba(255,255,255,0.15); transition: transform .4s, color .4s; }
+.star-row span.on { color: var(--gold); text-shadow: 0 0 24px rgba(255,198,90,0.7); animation: pop .5s cubic-bezier(.2,1.6,.4,1) both; }
+@keyframes pop { from { transform: scale(.2) rotate(-40deg); } }
+.star-key { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+.star-key .ok { color: var(--paper); }
+.lex-cats { display: grid; gap: 14px; }
+.lex-cat h3 { font-size: 15px; margin-bottom: 6px; display: flex; justify-content: space-between; }
+.lex-cat h3 small { font-family: var(--body); color: var(--muted); font-weight: 600; }
+.lex-words { display: flex; flex-wrap: wrap; gap: 5px; }
+.lex-words .chip.unk { color: rgba(255,255,255,0.35); letter-spacing: .1em; }
+.how { display: grid; gap: 12px; font-size: 15px; line-height: 1.5; }
+.how div { display: grid; grid-template-columns: 34px 1fr; gap: 10px; align-items: start; }
+.how .k { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: rgba(118,144,255,0.18); font-family: var(--display); font-weight: 600; color: #c9d3ff; }
+.how p { margin: 0; color: #dfe2fb; }
+.adj-list { display: flex; flex-wrap: wrap; gap: 5px; }
+#loading { position: fixed; inset: 0; display: grid; place-items: center; background: var(--night); z-index: 50; font-family: var(--display); font-size: 20px; color: var(--muted); transition: opacity .6s; text-align: center; padding: 0 max(16px, env(safe-area-inset-left, 0px)); }
+#loading.gone { opacity: 0; pointer-events: none; }
+#loading .err { font-family: var(--body); font-size: 15px; max-width: 46ch; color: #ffd2cb; margin-top: 10px; }
+
+@media (max-width: 760px) {
+  .goals-panel { max-width: 56vw; padding: 10px 12px; }
+  .goals-panel h2 { font-size: 17px; margin-bottom: 4px; }
+  #goals li { font-size: 12.5px; }
+  #goals.collapsed li:not(.current) { display: none; }
+  .goal-toggle { display: inline-block; margin-top: 6px; background: transparent !important; border: 0 !important; padding: 0 !important; font-size: 12px !important; color: var(--ink); }
+  .status-panel { min-width: 0; padding: 10px; gap: 8px; width: 38vw; box-sizing: border-box; }
+  .hearts svg { width: 18px; height: 18px; }
+  .tools button { padding: 5px 8px; font-size: 12px; }
+  .quill input { font-size: 16px; }
+  .quill button { padding: 10px 14px; }
+  #toasts { bottom: calc(118px + env(safe-area-inset-bottom, 0px)); }
+  .title-block { padding: 0 0 4vh 0; }
+  #screen-title { background: linear-gradient(0deg, rgba(10,13,34,0.9) 0%, rgba(10,13,34,0.4) 55%, transparent 80%); }
+  .brief-stats .v { font-size: 20px; }
+  #rule-banner { top: auto; bottom: calc(150px + env(safe-area-inset-bottom, 0px)); white-space: normal; text-align: center; width: max-content; max-width: calc(100% - 32px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast, .star-row span.on { animation: none; }
+}
+</style>
+
+<canvas id="scene" tabindex="-1" aria-label="Game world"></canvas>
+<div id="labels" aria-hidden="true"></div>
+<div id="vignette"></div>
+
+<div id="hud" hidden>
+  <header class="hud-top">
+    <section class="panel goals-panel" aria-label="Goals">
+      <div class="eyebrow" id="lvl-eyebrow">Isle 1</div>
+      <h2 id="lvl-name">First Words</h2>
+      <ul id="goals" class="collapsed"></ul>
+      <button class="goal-toggle" id="goal-toggle" type="button">Show all goals</button>
+    </section>
+    <section class="panel status-panel" aria-label="Status">
+      <div class="hearts" id="hearts" aria-label="Hearts"></div>
+      <div class="ink">
+        <div class="ink-label"><span>Ink</span><b id="ink-num">0 / 10</b></div>
+        <div class="ink-bar"><i id="ink-fill"></i><em id="ink-par"></em></div>
+        <div class="ink-par-text" id="ink-par-text"></div>
+      </div>
+      <div class="tools">
+        <button id="btn-hint" type="button">Hint</button>
+        <button id="btn-lex" type="button">Lexicon</button>
+        <button id="btn-restart" type="button">Retry</button>
+        <button id="btn-menu" type="button">Isles</button>
+        <button id="btn-sound" type="button" aria-pressed="true" title="Sound">♪</button>
+      </div>
+    </section>
+  </header>
+  <div id="rule-banner" hidden></div>
+  <div id="toasts" aria-live="polite"></div>
+  <div class="quill-wrap">
+    <div id="preview" class="preview"></div>
+    <form id="quill" class="panel quill" autocomplete="off">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 3c-6 1-11 5-13 12l-2 6 4-3c7-1 10-7 11-15z"/><path d="M7 15c3-1 6-4 8-7"/></svg>
+      <input id="word" name="word" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="48" placeholder="Write a word… try “long ladder”" aria-label="Write a word">
+      <button type="submit" class="primary" id="write-btn">Write</button>
+    </form>
+    <div id="recent" class="recent"></div>
+  </div>
+</div>
+
+<aside id="card" class="panel card" hidden></aside>
+
+<div id="screen-title" class="screen" hidden>
+  <div class="title-block">
+    <div class="eyebrow">A word-made puzzle adventure</div>
+    <h1>Inkwell<span>Isles</span></h1>
+    <p>Wren carries a quill that turns words into real things. Write a ladder, a dragon or a giant frozen sponge, then use what appears to reach the Lumen on each floating isle.</p>
+    <div class="row">
+      <button class="big primary" id="btn-play" type="button">Play</button>
+      <button id="btn-sandbox" type="button">Sandbox</button>
+      <button id="btn-how" type="button">How to play</button>
+    </div>
+    <div class="settings">
+      <label for="sel-quality">Graphics
+        <select id="sel-quality"><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
+      </label>
+      <label for="chk-music"><input type="checkbox" id="chk-music" checked> Music</label>
+    </div>
+  </div>
+</div>
+
+<div id="screen-map" class="screen modal" hidden>
+  <div class="panel sheet">
+    <div class="sheet-head">
+      <div><div class="eyebrow" id="map-progress">0 of 36 stars</div><h2>Choose an isle</h2></div>
+      <button id="map-back" type="button">Back</button>
+    </div>
+    <div class="isles" id="isles"></div>
+  </div>
+</div>
+
+<div id="screen-brief" class="screen modal" hidden><div class="panel sheet narrow" id="brief"></div></div>
+<div id="screen-result" class="screen modal" hidden><div class="panel sheet narrow" id="result"></div></div>
+<div id="screen-lex" class="screen modal" hidden><div class="panel sheet" id="lex"></div></div>
+<div id="screen-how" class="screen modal" hidden>
+  <div class="panel sheet">
+    <div class="sheet-head"><h2>How to play</h2><button id="how-close" type="button">Close</button></div>
+    <div class="how">
+      <div><span class="k">1</span><p><b>Write a word</b> in the quill bar and press Write. The object appears next to Wren. Each word costs ink, and each isle has a limited supply.</p></div>
+      <div><span class="k">2</span><p><b>Add adjectives</b> in front of the noun: <i>giant</i>, <i>tiny</i>, <i>long</i>, <i>metal</i>, <i>flaming</i>, <i>frozen</i>, <i>friendly</i>, <i>strong</i>, a colour and more. They change size, material and behaviour, and most cost 1–2 extra ink.</p></div>
+      <div><span class="k">3</span><p><b>Drag objects</b> onto things in the world: a ladder onto a ledge, a plank across a gap, honey onto a bear, water onto a fire. Drop gear such as wings, a torch or scuba gear onto Wren to equip it.</p></div>
+      <div><span class="k">4</span><p><b>Tap the ground</b> to walk there. Drag empty space to turn the camera, and pinch or scroll to zoom. Tap any object to see its stats: reach, length, weight and power.</p></div>
+      <div><span class="k">5</span><p><b>Watch for side effects.</b> Fire spreads to wood and cloth. Angry animals chase you. Goats eat wooden things. Lava burns wooden bridges. You have three hearts per isle.</p></div>
+      <div><span class="k">★</span><p><b>Stars:</b> one for reaching the Lumen, one for staying at or under par ink, and one for finishing without losing a heart.</p></div>
+    </div>
+    <div><div class="eyebrow" style="margin-bottom:6px">Adjectives the quill understands</div><div class="adj-list" id="adj-list"></div></div>
+  </div>
+</div>
+
+<div id="loading"><div>Inking the isles…<div class="err" id="load-err"></div></div></div>
+
+<script>
+  window.addEventListener('error', function (e) {
+    var el = document.getElementById('load-err');
+    if (el && !window.__gameReady) el.textContent = 'The game could not start: ' + (e.message || 'a script failed to load') + '. It needs WebGL and a modern browser.';
+  });
+</script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+/*__JS__*/
+</script>
