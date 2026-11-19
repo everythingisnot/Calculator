@@ -116,7 +116,7 @@ class Thing {
       if (Math.random() < (ud.small ? 0.5 : 0.95)) FX.fire(fp.x, fp.y, fp.z, k);
       if (ud.big && Math.random() < 0.6) FX.fire(fp.x, fp.y, fp.z, k * 0.8);
       if (Math.random() < 0.05) FX.smoke(fp.x, fp.y + 0.6, fp.z, 0.6);
-      requestLight(fp.x, fp.y + 0.3, fp.z, 0xff8a3a, (ud.small ? 5 : 12) * fs * (0.85 + Math.random() * 0.3), 6 + 2 * fs, 1);
+      requestLight(fp.x, fp.y + (this.equipped ? 1.1 : 0.3), fp.z, 0xff8a3a, (ud.small ? 5 : 12) * fs * (0.85 + Math.random() * 0.3), 6 + 2 * fs, 1);
     } else if (this.p.light > 0 && !this.burning) {
       const c = ud.glow ?? (typeof this.p.glow === 'number' ? this.p.glow : 0xffe2a8);
       requestLight(this.pos.x, this.pos.y + Math.max(0.6, this.height * fs * 0.6), this.pos.z, c, Math.min(30, this.p.light * 2.2), this.p.light * 1.3, 0);
@@ -384,7 +384,7 @@ class Player {
     for (const t of this.equippedThings()) t.update(dt);
     if ((flying || this.mode === 'bounce') && this.back && this.back.parts.jet) { const p = this.backSlot.localToWorld(V3(0, -0.2, 0)); FX.fire(p.x, p.y, p.z, 0.5); }
     const ll = this.lightLevel();
-    if (ll > 0 && !this.hasTag('flame')) requestLight(this.pos.x, this.pos.y + 1.4, this.pos.z, 0xffe6b0, 9 + ll, ll * 1.4, 3);
+    if (ll > 0 && !this.hasTag('flame')) requestLight(this.pos.x, this.pos.y + 2.6, this.pos.z, 0xffe6b0, 10 + ll, ll * 1.6, 3);
     if (this.ride && this.ride.has('creature')) this.ride.animLegs(dt, moving ? 5 : 0);
   }
 }

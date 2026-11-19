@@ -46,9 +46,11 @@ class Game {
     const asp = camera.aspect || 1;
     this.camTarget = V3(...c.target); this.camDist = c.dist * (asp < 1 ? 1 + (1 - asp) * 1.1 : 1);
     controls.target.copy(this.camTarget);
-    const intro = opts.showcase ? 1 : 1.7;
-    camera.position.set(this.camTarget.x - 2, this.camTarget.y + this.camDist * 0.62 * intro, this.camTarget.z + this.camDist * 0.8 * intro);
-    controls.maxDistance = Math.max(48, this.camDist * 1.6);
+    const intro = opts.showcase ? 1 : 1.25;
+    this.camOffset = V3(-2, this.camDist * 0.62, this.camDist * 0.8).normalize().multiplyScalar(this.camDist);
+    camera.position.copy(this.camTarget).addScaledVector(this.camOffset, intro);
+    controls.minDistance = 7;
+    controls.maxDistance = this.camDist * (opts.showcase ? 1.6 : 1.3);
     this.intro = opts.showcase ? 0 : 1.6;
   }
   dispose() { this.world.dispose(); Labels.clear(); fxAdd.clear(); fxNorm.clear(); closeCard(); }
@@ -68,6 +70,10 @@ class Game {
     updateRecent(r.label);
     this.updateHUD();
     if (t.burning) this.toast(`The ${t.label} is burning itself up!`, 'bad');
+    this.focusOn(t);
+    const tag = Labels.add(`New: <b>${esc(t.label)}</b>`, () => V3(t.pos.x, t.pos.y + Math.max(1.2, t.height * t.p.scale) + 0.5, t.pos.z), 'new');
+    setTimeout(() => Labels.remove(tag), 3500);
+    if (COARSE) setTimeout(() => { if (t.alive && !t.dragging && !t.equipped && game === this && !down) openCard(t); }, 700);
     return true;
   }
   spawn(r, x, z, free = false) {
@@ -94,6 +100,16 @@ class Game {
     return t;
   }
   onThingRemoved(t) { if (cardThing === t) closeCard(); }
+  focusOn(t, sec = 2.5) { this.focus = { t, time: sec }; }
+  recenter() { this.recenterT = 1.2; }
+  useOn(t, tg) {
+    if (!t.alive) return;
+    if (t.snap) { const old = t.snap.target; t.snap = null; old.release?.(t); t.group.quaternion.identity(); }
+    t.pos.y = tg.h + 1;
+    FX.ink(tg.x, tg.h, tg.z);
+    this.dropThing(t, tg.x, tg.z);
+    this.focusOn(t, 2);
+  }
   onEquip(t) {
     Sfx.pop();
     let msg = `Wren equips the ${t.label}.`;
@@ -267,8 +283,18 @@ class Game {
     // camera
     if (this.intro > 0) { this.intro -= dt; }
     if (!this.showcase) {
-      const want = this.camTarget.clone().lerp(V3(pl.pos.x, pl.pos.y + 0.8, pl.pos.z), 0.35);
-      controls.target.lerp(want, 1 - Math.exp(-dt * 2));
+      let focus = V3(pl.pos.x, pl.pos.y + 0.8, pl.pos.z);
+      if (this.focus && this.focus.time > 0) { this.focus.time -= dt; if (this.focus.t.alive && !this.focus.t.equipped) focus.lerp(V3(this.focus.t.pos.x, this.focus.t.pos.y + 0.5, this.focus.t.pos.z), 0.6); }
+      const dz = camera.position.distanceTo(controls.target);
+      const k = 0.35 + 0.6 * clamp(1 - (dz - 9) / Math.max(1, this.camDist - 9), 0, 1);
+      if (cardThing && window.innerWidth < 700) focus.lerp(V3(cardThing.pos.x, cardThing.pos.y, cardThing.pos.z), 0.7);
+      const want = this.camTarget.clone().lerp(focus, k);
+      if (!ui.card.hidden && window.innerWidth < 700) want.y -= dz * 0.17;
+      controls.target.lerp(want, 1 - Math.exp(-dt * 2.5));
+      if (this.recenterT > 0) { this.recenterT -= dt; camera.position.lerp(controls.target.clone().add(this.camOffset), 1 - Math.exp(-dt * 4)); }
+      const pts = [V3(pl.pos.x, pl.pos.y + 0.7, pl.pos.z)];
+      for (const t of this.things) if (!t.equipped && (t.dragging || (this.focus && this.focus.t === t && this.focus.time > 0) || cardThing === t)) pts.push(V3(t.pos.x, t.pos.y + 0.5, t.pos.z));
+      this.world.fadeBlockers(pts, dt);
       const d = camera.position.distanceTo(controls.target);
       if (this.intro > 0 && d > this.camDist) { const dir = camera.position.clone().sub(controls.target).normalize(); camera.position.copy(controls.target).addScaledVector(dir, lerp(d, this.camDist, 1 - Math.exp(-dt * 2.5))); }
     }
@@ -313,7 +339,20 @@ class Game {
 const ray = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
 let game = null, down = null, cardThing = null;
-function setRay(e) { const r = canvas.getBoundingClientRect(); ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, camera); }
+const COARSE = window.matchMedia ? window.matchMedia('(pointer: coarse)').matches : false;
+function setRay(e, dy = 0) { const r = canvas.getBoundingClientRect(); ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY + dy - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, camera); }
+function nearestThingOnScreen(e, px) {
+  const r = canvas.getBoundingClientRect(), v = new THREE.Vector3();
+  let best = null, bd = px;
+  for (const t of game.things) {
+    if (t.equipped || t.fixed || !t.alive) continue;
+    v.set(t.pos.x, t.pos.y + Math.min(1.2, t.height * t.p.scale * 0.5), t.pos.z).project(camera);
+    if (v.z > 1) continue;
+    const d = Math.hypot((v.x + 1) / 2 * r.width + r.left - e.clientX, (1 - v.y) / 2 * r.height + r.top - e.clientY);
+    if (d < bd) { bd = d; best = t; }
+  }
+  return best;
+}
 function screenOpen() { return [...document.querySelectorAll('.screen')].some((s) => !s.hidden); }
 function hitThing() {
   const groups = game.things.filter((t) => !t.equipped && !t.fixed).map((t) => t.group);
@@ -333,8 +372,8 @@ canvas.addEventListener('pointerdown', (e) => {
   if (!game || game.showcase || screenOpen() || game.won || game.failed) return;
   if (document.activeElement === ui.input && e.pointerType !== 'mouse') ui.input.blur();
   setRay(e);
-  const t = hitThing();
-  down = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId };
+  const t = hitThing() || (e.pointerType !== 'mouse' && !hitPlayer() ? nearestThingOnScreen(e, 34) : null);
+  down = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId, touch: e.pointerType !== 'mouse' };
   if (t) { down.thing = t; controls.enabled = false; canvas.setPointerCapture(e.pointerId); }
   else if (hitPlayer()) { down.player = true; }
 }, { capture: true });
@@ -349,7 +388,7 @@ canvas.addEventListener('pointermove', (e) => {
     t.sleeping = false;
   }
   if (!down.dragging) return;
-  setRay(e);
+  setRay(e, down.touch ? -70 : 0);
   let p = null, h = down.planeH;
   const gh = hitGround();
   if (gh) { p = gh.p; h = gh.h; down.planeH = h; } else { const v = new THREE.Vector3(); if (ray.ray.intersectPlane(new THREE.Plane(V3(0, 1, 0), -h), v)) p = v; }
@@ -410,20 +449,27 @@ function thingStatsHTML(p, tags, def) {
 function placeCard(x, y) {
   const c = ui.card, w = c.offsetWidth, h = c.offsetHeight;
   const mobile = window.innerWidth < 700;
-  if (mobile) { c.style.left = `max(16px, env(safe-area-inset-left, 0px))`; c.style.top = 'auto'; c.style.bottom = `calc(140px + env(safe-area-inset-bottom, 0px))`; return; }
+  document.body.classList.toggle('card-open', mobile);
+  if (mobile) { c.style.left = `max(16px, env(safe-area-inset-left, 0px))`; c.style.top = 'auto'; c.style.bottom = `calc(100px + env(safe-area-inset-bottom, 0px))`; return; }
   c.style.bottom = 'auto';
   c.style.left = clamp(x + 16, 16, window.innerWidth - w - 16) + 'px';
   c.style.top = clamp(y - h / 2, 80, window.innerHeight - h - 150) + 'px';
 }
 function openCard(t, x, y) {
   cardThing = t;
+  const uses = game.targetList.filter((tg) => !['npc', 'powder'].includes(tg.type) && (!tg.solved || tg.type === 'plate') && !(t.snap && t.snap.target === tg) && tg.labelEl)
+    .map((tg) => ({ tg, name: tg.labelEl.el.textContent.replace(/\s+/g, ' ').trim() }));
   const { rows, chips } = thingStatsHTML(t.p, t.tags, t.def);
   const status = t.burning ? '<span class="chip t-fire">Burning</span>' : t.sleeping ? '<span class="chip">Asleep</span>' : '';
   ui.card.innerHTML = `<button class="x" id="card-x" type="button" aria-label="Close">×</button><div><div class="eyebrow">${esc(t.def.cat)}</div><h3>${esc(t.label)}</h3></div>
     ${rows ? `<div class="stats">${rows}</div>` : ''}<div class="tags">${chips}${status}</div>
-    <div class="acts">${t.p.equip ? '<button id="card-equip" type="button" class="primary">Give to Wren</button>' : ''}<button id="card-erase" type="button">Erase</button></div>
-    <div class="eyebrow" style="text-transform:none;letter-spacing:0">Drag it onto something to use it. Erasing gives no ink back.</div>`;
+    ${uses.length ? `<div class="uses"><div class="eyebrow">Use it on</div>${uses.map((u, i) => `<button type="button" class="use" data-i="${i}">${esc(u.name)}</button>`).join('')}</div>` : ''}
+    <div class="acts">${t.p.equip ? '<button id="card-equip" type="button" class="primary">Give to Wren</button>' : ''}${t.has('heal') && !t.p.equip ? '<button id="card-heal" type="button" class="primary">Use on Wren</button>' : ''}<button id="card-erase" type="button">Erase</button></div>
+    <div class="eyebrow" style="text-transform:none;letter-spacing:0">Tap a target above, or drag the object onto it. Erasing gives no ink back.</div>`;
+  if (x == null) { const v = V3(t.pos.x, t.pos.y + 1, t.pos.z).project(camera); x = (v.x + 1) / 2 * window.innerWidth; y = (1 - v.y) / 2 * window.innerHeight; }
   ui.card.hidden = false; placeCard(x, y);
+  ui.card.querySelectorAll('.use').forEach((b) => (b.onclick = () => { const u = uses[+b.dataset.i]; closeCard(); game.useOn(t, u.tg); }));
+  const hb = $('#card-heal'); if (hb) hb.onclick = () => { closeCard(); game.dropThing(t, game.player.pos.x, game.player.pos.z); };
   $('#card-x').onclick = closeCard;
   $('#card-erase').onclick = () => { FX.ink(t.pos.x, t.pos.y, t.pos.z); t.remove('erased'); closeCard(); };
   const eq = $('#card-equip'); if (eq) eq.onclick = () => { game.player.equip(t); closeCard(); };
@@ -439,7 +485,7 @@ function openPlayerCard(x, y) {
   $('#card-x').onclick = closeCard;
   ui.card.querySelectorAll('[data-slot]').forEach((b) => (b.onclick = () => { const t = pl[b.dataset.slot]; if (t) pl.unequip(t); closeCard(); }));
 }
-function closeCard() { ui.card.hidden = true; cardThing = null; }
+function closeCard() { ui.card.hidden = true; cardThing = null; document.body.classList.remove('card-open'); }
 
 // ---------------------------------------------------------------- quill bar
 ui.form.addEventListener('submit', (e) => {
@@ -489,7 +535,7 @@ function loadLevel(level, opts = {}) {
     ui.rule.hidden = !level.rules?.noFly; ui.rule.textContent = level.rules?.noFly || '';
     recentWords.length = 0; ui.recent.innerHTML = ''; ui.input.value = ''; ui.preview.innerHTML = '';
     game.updateHUD();
-    setTimeout(() => game && game.level === level && game.toast(level.sandbox ? 'Unlimited ink. Write anything!' : 'Write a word below, then drag what appears onto the glowing spots.', 'gold'), 600);
+    setTimeout(() => game && game.level === level && game.toast(level.sandbox ? 'Unlimited ink. Write anything!' : (COARSE ? 'Write a word below, then tap a target in the card that pops up, or drag the object there.' : 'Write a word below, then drag what appears onto the glowing spots, or tap it to pick a target.'), 'gold'), 600);
   }
 }
 function showTitle() { loadLevel(LEVELS[0], { showcase: true }); show('title'); }
@@ -560,6 +606,7 @@ $('#btn-menu').onclick = () => { closeCard(); showMap(); };
 $('#btn-restart').onclick = () => { if (game) loadLevel(game.level); };
 $('#btn-hint').onclick = () => { if (!game) return; const h = game.level.hints; game.toastSeen.clear(); game.toast(`Hint ${game.hintIx % h.length + 1} of ${h.length}: ${h[game.hintIx % h.length]}`, 'gold'); game.hintIx++; };
 $('#btn-lex').onclick = showLexicon;
+$('#btn-view').onclick = () => { if (game) game.recenter(); };
 $('#goal-toggle').onclick = () => { const c = ui.goals.classList.toggle('collapsed'); $('#goal-toggle').textContent = c ? 'Show all goals' : 'Show fewer'; };
 const sndBtn = $('#btn-sound');
 sndBtn.setAttribute('aria-pressed', String(Sfx.on));

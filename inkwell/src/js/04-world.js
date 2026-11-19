@@ -60,7 +60,7 @@ const cloudData = [];
   for (let i = 0; i < CLOUD_N; i++) {
     let a, rad, y;
     const below = i % 3 === 0;
-    a = below ? r() * TAU : Math.PI + 0.15 + r() * (Math.PI - 0.3); rad = below ? 30 + r() * 70 : 55 + r() * 90; y = below ? -17 + r() * 4 : -12 + r() * 16;
+    a = below ? r() * TAU : Math.PI + 0.15 + r() * (Math.PI - 0.3); rad = below ? 45 + r() * 70 : 80 + r() * 90; y = below ? -17 + r() * 4 : -12 + r() * 16;
     const puffs = [];
     const s = 2.2 + r() * 3.4;
     for (let j = 0; j < PUFFS; j++) puffs.push([(j - PUFFS / 2) * s * 0.5 + (r() - 0.5) * s, (r() - 0.3) * s * 0.5, (r() - 0.5) * s * 0.8, s * (0.55 + r() * 0.5) * (1 - Math.abs(j - PUFFS / 2) / PUFFS)]);
@@ -232,7 +232,28 @@ class World {
       P(cyl(0.08, 0.16, 1.8, 6), trunk, 0, 0.9, 0, g);
       for (let i = 0; i < 4; i++) P(cyl(0.03, 0.06, 0.8, 5), trunk, Math.cos(i * 1.7) * 0.25, 1.3 + i * 0.15, Math.sin(i * 1.7) * 0.25, g, Math.sin(i * 1.7) * 0.8, 0, Math.cos(i * 1.7) * 0.8);
     }
+    g.traverse((o) => { if (o.isMesh) { o.material = o.material.clone(); o.material.transparent = true; } });
+    g.userData.fade = 1;
+    (this.trees || (this.trees = [])).push(g);
     this.group.add(g);
+  }
+  fadeBlockers(points, dt) {
+    if (!this.trees) return;
+    const cam = camera.position, ab = new THREE.Vector3(), ap = new THREE.Vector3(), c = new THREE.Vector3();
+    for (const tr of this.trees) {
+      c.set(tr.position.x, tr.position.y + 1.6 * tr.scale.y, tr.position.z);
+      let block = false;
+      for (const p of points) {
+        ab.subVectors(p, cam); ap.subVectors(c, cam);
+        const t = clamp(ap.dot(ab) / ab.lengthSq(), 0, 1);
+        if (t > 0.98) continue;
+        if (ap.sub(ab.multiplyScalar(t)).length() < 1.5 * tr.scale.x) { block = true; break; }
+      }
+      const want = block ? 0.18 : 1;
+      if (Math.abs(tr.userData.fade - want) < 0.01) continue;
+      tr.userData.fade = lerp(tr.userData.fade, want, 1 - Math.exp(-dt * 8));
+      tr.traverse((o) => { if (o.isMesh) { o.material.opacity = tr.userData.fade; o.material.depthWrite = tr.userData.fade > 0.9; o.castShadow = tr.userData.fade > 0.5; } });
+    }
   }
   buildDistant() {
     const r = rng(this.level.seed ?? 5), p = this.pal;
@@ -345,7 +366,7 @@ class Lumen {
     this.ring.rotation.z += dt * 0.8; this.ring2.rotation.x += dt * 0.6;
     if (this.hidden) return;
     const k = this.active ? 1 : 0.3;
-    requestLight(this.x, this.h + 1.6, this.z, 0xffc870, 14 * k, 7, 2);
+    requestLight(this.x, this.h + 2.8, this.z, 0xffc870, 16 * k, 8, 2);
     if (this.active && Math.random() < 0.4) FX.sparkle(this.x, this.h + 1.35, this.z, 0xffe6a0, 0.7);
   }
 }
